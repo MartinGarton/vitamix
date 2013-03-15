@@ -51,7 +51,7 @@ func (t *rewriteVisitor) Frame() *frame {
 	return &t.frame
 }
 
-// Visit implements ast.Visistor's Visit method
+// Visit implements ast.Visitor's Visit method
 func (t *rewriteVisitor) Visit(node ast.Node) ast.Visitor {
 	if node == nil {
 		return t
