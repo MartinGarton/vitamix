@@ -64,7 +64,7 @@ func loop() {
 
 		//  TODO: why 2 and not 1?
 		//  TODO: worry more about goroutines that are in syscalls?
-		if len(vch) > 0 || runtime.NumRunnableGoroutine() > 2 {
+		if runtime.NumRunnableGoroutine() > 2 || len(vch) > 0 {
 			continue
 		}
 
