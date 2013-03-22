@@ -7,6 +7,7 @@ package vtime
 import (
 	"sort"
 	"time"
+	"runtime"
 )
 
 // Sleep is the virtualized version of time.Sleep
@@ -54,84 +55,56 @@ type vnow struct {
 		}
 */
 func Go() {
-	vch <- vgo{}
 }
-
-type vgo struct{}
 
 // Die is invoked after the end of functions called in go statements in the
 // virtualized source. See the doc for Go.
 func Die() {
-	vch <- vdie{}
 }
-
-type vdie struct{}
 
 // Block is invoked before every blocking channel operation (send, receive,
 // select statements) in the transformed source
 func Block() {
-	vch <- vblock{}
 }
-
-type vblock struct{}
 
 // Unblock is invoked after every blocking channel operation (send, receive,
 // select statements) in the transformed source
 func Unblock() {
-	vch <- vunblock{}
 }
 
-type vunblock struct{}
 
 // Runtime below
 
 var vch chan interface{}
 
 func init() {
-	vch = make(chan interface{})
+	vch = make(chan interface{}, 4)
 	go loop()
 }
 
 func loop() {
 	var now     int64  // Current virtual time
-	var ngo     int    // Number of active goroutines
-	var nblock  int    // Number of blocked goroutines
 	var q       queue  // Queue of waiting sleep calls
 
-	ngo = 1     // count the main go routine
 	for {
 		vcmd := <-vch
 		switch t := vcmd.(type) {
 		case *vsleep:
-			nblock++
 			q.Add(makeUntil(t, now))
 		case *vnow:
 			t.resp <- now
 			close(t.resp)
-		case vgo:
-			ngo++
-		case vdie:
-			if ngo < 1 {
-				panic("no goroutines")
-			}
-			ngo--
-		case vblock:
-			nblock++
-		case vunblock:
-			if nblock < 1 {
-				panic("no blocked goroutines")
-			}
-			nblock--
 		}
-		if ngo == 0 || nblock < ngo {
+
+		if len(vch) > 0 || runtime.NumRunnableGoroutine() > 2 { //  why 2 and not 1?
 			continue
 		}
+
 		unsleep := q.DeleteMin()
 		if unsleep == nil {
 			//fmt.Fprintf(os.Stderr, "spinning\n")
 			continue
 		}
-		nblock--
 		if unsleep.when < now {
 			panic("negative time")
 		}
