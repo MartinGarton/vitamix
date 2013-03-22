@@ -67,30 +67,13 @@ func (t *rewriteVisitor) Visit(node ast.Node) ast.Visitor {
 	// Rewrite each statement of a block statement and stop the recursion of this visitor
 	var list []ast.Stmt
 	for _, stmt := range bstmt.List {
-		switch q := stmt.(type) {
-		case *ast.SelectStmt:
-			t.NeedPkgVtime = true
-			list = append(list, t.rewriteSelectStmt(q)...)
-		case *ast.SendStmt:
-			t.NeedPkgVtime = true
-			list = append(list, t.rewriteSendStmt(q)...)
-		case *ast.GoStmt:
-			t.NeedPkgVtime = true
-			list = append(list, t.rewriteGoStmt(q)...)
-		default:
-			if filterRecvStmt(stmt) != nil {
-				t.NeedPkgVtime = true
-				list = append(list, t.rewriteRecvStmt(stmt)...)
-			} else {
-				// Continue the walk recursively below this stmt
-				needVtime, err := recurseRewrite(t, stmt)
-				if err != nil {
-					t.errs.Add(err)
-				}
-				t.NeedPkgVtime = t.NeedPkgVtime || needVtime
-				list = append(list, stmt)
-			}
+		// Continue the walk recursively below this stmt
+		needVtime, err := recurseRewrite(t, stmt)
+		if err != nil {
+			t.errs.Add(err)
 		}
+		t.NeedPkgVtime = t.NeedPkgVtime || needVtime
+		list = append(list, stmt)
 	}
 	bstmt.List = list
 
@@ -98,108 +81,3 @@ func (t *rewriteVisitor) Visit(node ast.Node) ast.Visitor {
 	return nil
 }
 
-func (t *rewriteVisitor) rewriteGoStmt(gostmt *ast.GoStmt) []ast.Stmt {
-	// Rewrite lower level nodes
-	recurseRewrite(t, gostmt.Call.Fun)
-	for _, arg := range gostmt.Call.Args {
-		// TODO: Handle the case when an argument contains chan operations
-		RecurseProhibit(t, arg)
-	}
-	// Rewrite go statement itself
-	gostmt.Call = &ast.CallExpr{
-		Fun: &ast.FuncLit{
-			Type: &ast.FuncType{
-				Params: &ast.FieldList{},
-			},
-			Body: &ast.BlockStmt{
-				List: []ast.Stmt{
-					&ast.ExprStmt{ X: gostmt.Call },
-					makeSimpleCallStmt("vtime", "Die", gostmt.Call.Pos()),
-				},
-			},
-		},
-	}
-	return []ast.Stmt{
-		makeSimpleCallStmt("vtime", "Go", gostmt.Pos()),
-		gostmt,
-	}
-}
-
-func (t *rewriteVisitor) rewriteRecvStmt(stmt ast.Stmt) []ast.Stmt {
-	// Prohibit inner blocks from having channel operation nodes
-	switch q := stmt.(type) {
-	case *ast.AssignStmt:
-		for _, expr := range q.Lhs {
-			// TODO: Handle channel operations inside LHS of assignments
-			RecurseProhibit(t, expr)
-		}
-		for _, expr := range q.Rhs {
-			if expr == nil {
-				continue
-			}
-			// TODO: Handle channel operations inside RHS of assignments
-			if ue := filterRecvExpr(expr); ue != nil {
-				RecurseProhibit(t, ue.X)
-			} else {
-				RecurseProhibit(t, expr)
-			}
-		}
-	case *ast.ExprStmt:
-		if q == nil {
-			break
-		}
-		// TODO: Handle channel operations inside RHS of assignments
-		if ue := filterRecvExpr(q.X); ue != nil {
-			RecurseProhibit(t, ue.X)
-		} else {
-			RecurseProhibit(t, q)
-		}
-	default:
-		panic("unreach")
-	}
-	// Rewrite receive statement itself
-	return []ast.Stmt{
-		makeSimpleCallStmt("vtime", "Block", stmt.Pos()),
-		stmt,
-		makeSimpleCallStmt("vtime", "Unblock", stmt.Pos()),
-	}
-}
-
-func (t *rewriteVisitor) rewriteSendStmt(sendstmt *ast.SendStmt) []ast.Stmt {
-	// Rewrite lower level nodes
-	// TODO: Allow channel operations inside channel and value fields of send expression
-	RecurseProhibit(t, sendstmt.Chan)
-	RecurseProhibit(t, sendstmt.Value)
-	// Rewrite send statement itself
-	return []ast.Stmt{
-		makeSimpleCallStmt("vtime", "Block", sendstmt.Pos()),
-		sendstmt,
-		makeSimpleCallStmt("vtime", "Unblock", sendstmt.Pos()),
-	}
-}
-
-func (t *rewriteVisitor) rewriteSelectStmt(selstmt *ast.SelectStmt) []ast.Stmt {
-	// Rewrite the comm clauses
-	for _, commclause := range selstmt.Body.List {
-		needVtime, err := recurseRewrite(t, commclause); 
-		if err != nil {
-			t.errs.Add(err)
-		}
-		t.NeedPkgVtime = t.NeedPkgVtime || needVtime
-	}
-
-	// Place a call to Unblock immediately after each case and default
-	for _, clause := range selstmt.Body.List {
-		comm := clause.(*ast.CommClause)
-		body := comm.Body
-		comm.Body = append(
-			[]ast.Stmt{ makeSimpleCallStmt("vtime", "Unblock", comm.Pos()) },
-			body...,
-		)
-	}
-	// Surround the select by a block statement and prefix it with a call to vtime.Block
-	return []ast.Stmt{
-		makeSimpleCallStmt("vtime", "Block", selstmt.Pos()),
-		selstmt,
-	}
-}

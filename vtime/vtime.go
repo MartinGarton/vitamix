@@ -38,40 +38,6 @@ type vnow struct {
 	resp chan int64
 }
 
-/*
-	Go is invoked before go statements in the virtualized source.
-	In particular, the virtualizing compiler rewrites go statements like so:
-
-	Original:
-
-		go FuncName()
-
-	Virtualized:
-
-		vtime.Go()
-		go func() {
-			FuncName()
-			vtime.Die()
-		}
-*/
-func Go() {
-}
-
-// Die is invoked after the end of functions called in go statements in the
-// virtualized source. See the doc for Go.
-func Die() {
-}
-
-// Block is invoked before every blocking channel operation (send, receive,
-// select statements) in the transformed source
-func Block() {
-}
-
-// Unblock is invoked after every blocking channel operation (send, receive,
-// select statements) in the transformed source
-func Unblock() {
-}
-
 
 // Runtime below
 
@@ -96,7 +62,9 @@ func loop() {
 			close(t.resp)
 		}
 
-		if len(vch) > 0 || runtime.NumRunnableGoroutine() > 2 { //  why 2 and not 1?
+		//  TODO: why 2 and not 1?
+		//  TODO: worry more about goroutines that are in syscalls?
+		if len(vch) > 0 || runtime.NumRunnableGoroutine() > 2 {
 			continue
 		}
 
